@@ -2,46 +2,21 @@ from collections import deque
 from math import ceil
 import json
 from netmiko import ConnectHandler
-from datetime import datetime
 import time
 from colorama import Fore, Style, init
-import structlog
-import logging
-import os
+from elasticsearch import Elasticsearch
+from datetime import datetime, timedelta
 
-#folder locations in directory
-log_file_path = "NetworkLogs.json"
 
-#resets text color after each line
+
 init(autoreset=True)
 
-#get log information net netmiko
-logging.getLogger("paramiko").setLevel(logging.WARNING)
-logging.getLogger("netmiko").setLevel(logging.WARNING)
-
-#format for the log to created
-logging.basicConfig(
-    filename=log_file_path,
-    level=logging.INFO,
-    format="%(message)s",
-    filemode="a",
-)
-
-#structure of the log data in json
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),
-    ],
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-)
-
-#creates variable for the logs
-log = structlog.get_logger()
+#sets Elasticsearch host
+es_host = "http://localhost:9200"
 
 
-#creates a list of all devices on the network and their address
+
+#list all devices in the program eg Switch1, Router1 etc
 def list_devices():
     file = "Devices.json"
 
@@ -59,8 +34,9 @@ def list_devices():
         print(Fore.RED + "Error: Devices.json not found.")
 
 
-#simular function to be called within the next
+#loads a chosen device
 def load_devices():
+
     file = "Devices.json"
     try:
         with open(file, 'r') as devices:
@@ -69,11 +45,10 @@ def load_devices():
         print(Fore.RED + f"Error loading devices: {e}")
         return {}
     
-
-""" When multiply network devices have been added to the topology this allows specific devies to be chosen to SSH into and run 
-    troubleshooting commands. for automated purposes this can be added into a script which chooses devices automatically """
     
+#user selection for network devices, loads a list of whats in the program then loads the deatils to be used in SSH functions
 def select_device():
+
     devices = load_devices()
     if not devices:
         print(Fore.RED + "No devices found.")
@@ -95,24 +70,29 @@ def select_device():
     return cisco_device
 
 
-#SSH into the chosen device and shows interface brief
-def check_interfaces(cisco_device):
-    
+""" ------------------------- Start of cisco commands for trouble shooting -------------------------
 
+    These all use the cisco_device variabel loaded from the previous functions to SSH into the
+    device then runs the cisco command"""
+
+def check_interfaces(cisco_device):
     try:
         connection = ConnectHandler(**cisco_device)
         if 'secret' in cisco_device:
             connection.enable()
 
         output = connection.send_command("show ip interface brief")
-        print(f"interface Status\n{output}")
+        print(f"Interface Status:\n{output}")
         connection.disconnect()
+
 
     except Exception as e:
         print(f"Error {e}")
 
-#SSH into device and shows vlan brief 
+
+
 def show_vlan_brief(cisco_device):
+
     try:
         connection = ConnectHandler(**cisco_device)
         if 'secret' in cisco_device:
@@ -124,77 +104,24 @@ def show_vlan_brief(cisco_device):
     except Exception as e:
         print(f"Error {e}")
 
-""" This allows the returned information from the command to log the results as it comes from the terminal
-    it checks for strings in the returned output to log if the interface is up or down and uses the logging
-    structure from the beggining of the program to return it in a JSON file """ 
-    
-def log_interface(cisco_device):
-    if_name = input("Select an interface to check: ")
+""" ------------------------- end of cisco commands for trouble shooting -------------------------"""
 
-    try:
-        connection = ConnectHandler(**cisco_device)
-        connection.enable()
 
-        output = connection.send_command(f"show interface {if_name} status")
-        connection.disconnect()
-
-        if "notconnect" in output:
-            log.error(
-                "Interface Down",
-                interface=if_name,
-                status="Not Connected",
-                device=cisco_device["host"],
-            )
-        else:
-            log.info(
-                "Interface is up",
-                interface=if_name,
-                status="Connected",
-                device=cisco_device["host"],
-            )
-
-    except Exception as e:
-        log.error("Error checking interface", error=str(e))
-
-    print(f"Logs saved to: {log_file_path}")
-
-#prints content of the network logs
-def logs(number):
-
-    file = "NetworkLogs.json"
-
-    with open(file, 'r') as log:
-        last_lines = deque(log, maxlen=number)
-
-    for line in last_lines:
-        try:
-            data = json.loads(line)
-            print(data)
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON: {e}")
-
-""" To be able to SSH into devices on the network to run cisco commands and check their status each device needs its credentials
-    in the program so it can automatically access them, ths function simplifies having to hard code in each device
-    in the network topology and then formats the credentials into a JSON file which the program can extract
-    the details needed to access the device """
-    
+# Function to add new devices to the program, devices for this use same credentials so only device IP needs to be inputted
 def add_devices():
 
     json_file = "Devices.json"
 
     host = input(Fore.GREEN + "Enter host address: ")
-    username = input(Fore.GREEN + "Enter username: ")
-    password = input(Fore.GREEN + "Enter password: ")
-    secret = input(Fore.GREEN + "Enter secret: ")
     device_name = input(Fore.GREEN + "Enter the device name: ")
     
     new_device = {
         "device_type": "cisco_ios",
         "host": host,
-        "username": username,
-        "password": password,
+        "username": "admin",
+        "password": "cisco",
         "port": "22",
-        "secret": secret
+        "secret": "secret"
     }
     
     try:
@@ -210,3 +137,39 @@ def add_devices():
 
     print(Fore.GREEN + f"Device {device_name} added")
 
+
+
+# Querys Elasticsearch for recent logs from specific device chosen 
+def query_recent_logs(es_host, device_ip):
+
+    es = Elasticsearch(es_host)
+
+    time.sleep(5)
+
+    now = datetime.utcnow()
+    past = now - timedelta(seconds=15)
+
+    query = {
+        "bool": {
+            "must": [
+                {"match": {"host.ip": device_ip}}, 
+            ],
+            "filter": [
+                {
+                    "range": {
+                        "@timestamp": {
+                            "gte": past.isoformat(),
+                            "lte": now.isoformat()
+                        }
+                    }
+                }
+            ]
+        }
+    }
+
+    response = es.search(index="filebeat-*", query=query, size=10)
+    hits = response["hits"]["hits"]
+
+    print(f"\n🔍 Recent logs from {device_ip}:\n")
+    for hit in hits:
+        print(hit["_source"]["message"])
