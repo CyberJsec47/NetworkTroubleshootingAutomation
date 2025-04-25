@@ -4,18 +4,6 @@ from datetime import datetime
 import time
 from colorama import Fore, Style
 
-""" This is a protoype of a program which can remotley access network devices and run troublehshooting
-    commands, it is currently just the set up for data collection adn example of what can be done,
-    current feautres allows inputting network deivces in the topology so they can be remotley accesses
-    logs a example of a interface check and allows viewing content of the log file. 
-
-    for the next stages the log format to be sent to the ELK stack will need to be intergrated with this    
-    to be able to create custom logs based on the outcome of the device commands.
-
-    Once the network topology is set up this can be scritped to run in the back ground checking certain commands
-    and returning errors to the visual dashboard and then further intergrated with playbooks that work to fix 
-    issues if can be done remotley """
-
 
 def mainMenu():
 
@@ -39,17 +27,13 @@ def mainMenu():
         print(Fore.BLUE + "-" * 50)
         print(Fore.GREEN + " Run automated scans               [3]")
         print(Fore.BLUE + "-" * 50)
-        print(Fore.GREEN + " Select an interface to check      [4]")
+        print(Fore.GREEN + " View Elasticsearch logs           [4]")
         print(Fore.BLUE + "-" * 50)
-        print(Fore.GREEN + " View log file contents            [5]")
-        print(Fore.BLUE + "-" * 50)
-        print(Fore.GREEN + " Exit                              [6]")
+        print(Fore.GREEN + " Exit                              [5]")
         print(Fore.BLUE + "-" * 50)
 
         option = int(input(Fore.GREEN + " Choose an option: "))
-        
-    """ This option allows for each device in the network topology to be added to the program to allow remote access """
-    
+
         if option == 1:
             while True:
                 add_devices()
@@ -61,16 +45,12 @@ def mainMenu():
                     break
                 else:
                     print(Fore.RED + "Invalid option. Please enter 'Y' or 'N'.")
-                    
-    # This gives an overview of all devices in the topology and the address they are at
-    
+
         elif option == 2:
             list_devices()
             input(Fore.GREEN + "\nPress Enter to return to the menu...")
             continue
-            
-    # selects a device to SSH int and runs a set of automated commands
-    
+
         elif option == 3:
             cisco_device = select_device()
             print(Fore.GREEN + "Running automated tasks")
@@ -93,22 +73,15 @@ def mainMenu():
             except KeyboardInterrupt:
                 print(Fore.GREEN + "\nExiting tasks" + Style.RESET_ALL)
             continue
-""" This is an example function of being able to remotley access a device, check the status of it, here its interface status and then 
-    returns the relevant information as a JSON log """
-    
-       elif option == 4:
-            cisco_device = select_device()
-            log_interface(cisco_device)
-            continue
-            
-# Thsi just prints out a number of lines of the saved log file
+
+        elif option == "4":
+            cisco_device = select_device() 
+            es_host = "http://localhost:9200" 
+            device_ip = cisco_device["host"]  
+            query_recent_logs(es_host, device_ip)  
+            continue  
 
         elif option == 5:
-            lineCount = int(input("Choose number of lines to sample from file: " + Style.RESET_ALL))
-            logs(lineCount)
-            option = input(Fore.GREEN + "\nPress Enter to return to the menu...")
-
-        elif option == 6:
             print(Fore.GREEN + f.renderText("Exiting"))
             quit()
         else:
@@ -117,5 +90,3 @@ def mainMenu():
 
 if __name__ == "__main__":
     mainMenu()
-
-
